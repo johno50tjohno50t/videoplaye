@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.AppOpsManager;
 import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
 import android.app.RemoteAction;
@@ -41,8 +42,6 @@ import android.view.KeyEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowManager;
 import android.view.accessibility.CaptioningManager;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -77,10 +76,10 @@ import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.ts.TsExtractor;
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.text.CaptionStyleCompat;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
 import com.google.android.exoplayer2.ui.AspectRatioFrameLayout;
+import com.google.android.exoplayer2.ui.CaptionStyleCompat;
 import com.google.android.exoplayer2.ui.StyledPlayerControlView;
 import com.google.android.exoplayer2.ui.SubtitleView;
 import com.google.android.exoplayer2.ui.TimeBar;
@@ -298,12 +297,31 @@ public class PlayerActivity extends Activity {
                 view.setPadding(0, windowInsets.getSystemWindowInsetTop(),
                         0, windowInsets.getSystemWindowInsetBottom());
 
-                titleView.setPadding(windowInsets.getSystemWindowInsetLeft() + titleViewPadding, titleViewPadding,
-                        windowInsets.getSystemWindowInsetRight() + titleViewPadding, titleViewPadding);
+                int insetLeft = windowInsets.getSystemWindowInsetLeft();
+                int insetRight = windowInsets.getSystemWindowInsetRight();
 
-                // TODO: Improve bottom bar with bottom notch / "Double cutout"
-                findViewById(R.id.exo_bottom_bar).setPadding(windowInsets.getSystemWindowInsetLeft(), 0,
-                        windowInsets.getSystemWindowInsetRight(), 0);
+                int paddingLeft = 0;
+                int marginLeft = insetLeft;
+
+                int paddingRight = 0;
+                int marginRight = insetRight;
+
+                if (Build.VERSION.SDK_INT >= 28 && windowInsets.getDisplayCutout() != null) {
+                    if (windowInsets.getDisplayCutout().getSafeInsetLeft() == insetLeft) {
+                        paddingLeft = insetLeft;
+                        marginLeft = 0;
+                    }
+                    if (windowInsets.getDisplayCutout().getSafeInsetRight() == insetRight) {
+                        paddingRight = insetRight;
+                        marginRight = 0;
+                    }
+                }
+
+                Utils.setViewParams(titleView, paddingLeft + titleViewPadding, titleViewPadding, paddingRight + titleViewPadding, titleViewPadding,
+                        marginLeft, windowInsets.getSystemWindowInsetTop(), marginRight, 0);
+
+                Utils.setViewParams(findViewById(R.id.exo_bottom_bar), paddingLeft, 0, paddingRight, 0,
+                        marginLeft, 0, marginRight, 0);
 
                 findViewById(R.id.exo_progress).setPadding(windowInsets.getSystemWindowInsetLeft(), 0,
                         windowInsets.getSystemWindowInsetRight(), 0);
@@ -311,6 +329,13 @@ public class PlayerActivity extends Activity {
                 windowInsets.consumeSystemWindowInsets();
             }
             return windowInsets;
+        });
+
+        findViewById(R.id.delete).setOnClickListener(view -> {
+            releasePlayer();
+            deleteMedia();
+            haveMedia = false;
+            setDeleteVisible(false);
         });
 
         // Prevent double tap actions in controller
@@ -401,8 +426,6 @@ public class PlayerActivity extends Activity {
                 }
             }
         });
-
-        compatTranslucency();
 
         UtilsFlavor.onAppLaunch(this);
     }
@@ -528,7 +551,7 @@ public class PlayerActivity extends Activity {
             mReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    if (intent == null || !ACTION_MEDIA_CONTROL.equals(intent.getAction())) {
+                    if (intent == null || !ACTION_MEDIA_CONTROL.equals(intent.getAction()) || player == null) {
                         return;
                     }
 
@@ -553,12 +576,12 @@ public class PlayerActivity extends Activity {
                 mReceiver = null;
             }
             playerView.setControllerAutoShow(true);
-            if (player != null && !player.isPlaying())
-                playerView.showController();
-
-            // Workaround https://github.com/google/ExoPlayer/issues/8646
-            // TODO: Remove with the next ExoPlayer version update
-            ((CustomDefaultTimeBar)playerView.findViewById(R.id.exo_progress)).showScrubber();
+            if (player != null) {
+                if (player.isPlaying())
+                    Utils.hideSystemUi(playerView);
+                else
+                    playerView.showController();
+            }
         }
     }
 
@@ -645,7 +668,7 @@ public class PlayerActivity extends Activity {
     }
 
     private void initializePlayer() {
-        haveMedia = mPrefs.mediaUri != null && (Utils.fileExists(this, mPrefs.mediaUri) || mPrefs.mediaUri.getScheme().startsWith("http"));
+        haveMedia = mPrefs.mediaUri != null && (Utils.fileExists(this, mPrefs.mediaUri) || Utils.isSupportedUri(mPrefs.mediaUri));
 
         if (player == null) {
             trackSelector = new DefaultTrackSelector(this);
@@ -827,9 +850,14 @@ public class PlayerActivity extends Activity {
                 restorePlayState = true;
             }
             player.removeListener(playbackStateListener);
+            player.clearMediaItems();
             player.release();
             player = null;
         }
+        titleView.setVisibility(View.GONE);
+        if (buttonPiP != null)
+            Utils.setButtonEnabled(this, buttonPiP, false);
+        Utils.setButtonEnabled(this, buttonAspectRatio, false);
     }
 
     private class PlaybackStateListener implements Player.EventListener{
@@ -856,6 +884,16 @@ public class PlayerActivity extends Activity {
 
         @Override
         public void onPlaybackStateChanged(int state) {
+            boolean isNearEnd = false;
+            final long duration = player.getDuration();
+            if (duration != C.TIME_UNSET) {
+                final long position = player.getCurrentPosition();
+                if (position + 4000 >= duration) {
+                    isNearEnd = true;
+                }
+            }
+            setDeleteVisible(haveMedia && (state == Player.STATE_ENDED || isNearEnd));
+
             if (state == Player.STATE_READY) {
                 frameRendered = true;
                 final Format format = player.getVideoFormat();
@@ -1153,33 +1191,6 @@ public class PlayerActivity extends Activity {
             setSubtitleTextSize(newConfig.orientation);
     }
 
-    void compatTranslucency() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            try {
-                final Resources resources = getResources();
-                final boolean enableTranslucentDecor = resources.getBoolean(resources.getIdentifier("config_enableTranslucentDecor", "bool", "android"));
-                if (enableTranslucentDecor) {
-                    // Samsung devices running L show transparent status bar instead of translucent one
-                    // https://stackoverflow.com/questions/31024072/android-translucent-status-bar-differs-in-different-devices
-                    // https://stackoverflow.com/questions/39061975/android-translucent-status-bar-on-samsung-devices
-                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M && Build.MANUFACTURER.toLowerCase().equals("samsung")) {
-                        final Window window = getWindow();
-                        window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
-                        window.setStatusBarColor(resources.getColor(R.color.exo_bottom_bar_background));
-                    }
-                } else {
-                    // Nexus 10 disables translucent bars
-                    // https://forum.xda-developers.com/showthread.php?t=2510252
-                    final Window window = getWindow();
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
-                }
-            } catch (Resources.NotFoundException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
     void showError(ExoPlaybackException error) {
         final String errorGeneral = error.getLocalizedMessage();
         String errorDetailed;
@@ -1247,6 +1258,10 @@ public class PlayerActivity extends Activity {
             subtitlesScale = captioningManager.getFontScale();
             if (subtitleView != null) {
                 subtitleView.setUserDefaultStyle();
+                // Do not apply embedded style as currently the only supported color style is PrimaryColour
+                // https://github.com/google/ExoPlayer/issues/8435#issuecomment-762449001
+                // This may result in poorly visible text (depending on user's selected edgeColor)
+                // The same can happen with style provided using setStyle but enabling CaptioningManager should be a way to change the behavior
                 subtitleView.setApplyEmbeddedStyles(false);
             }
         }
@@ -1322,6 +1337,12 @@ public class PlayerActivity extends Activity {
 
     @RequiresApi(api = Build.VERSION_CODES.O)
     private void enterPiP() {
+        final AppOpsManager appOpsManager = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+        if (AppOpsManager.MODE_ALLOWED != appOpsManager.checkOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), getPackageName())) {
+            startActivity(new Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS", Uri.fromParts("package", getPackageName(), null)));
+            return;
+        }
+
         playerView.setControllerAutoShow(false);
         playerView.hideController();
 
@@ -1349,5 +1370,19 @@ public class PlayerActivity extends Activity {
             ((PictureInPictureParams.Builder)mPictureInPictureParamsBuilder).setAspectRatio(rational);
         }
         enterPictureInPictureMode(((PictureInPictureParams.Builder)mPictureInPictureParamsBuilder).build());
+    }
+
+    void setDeleteVisible(boolean visible) {
+        final int visibility = (visible && haveMedia && Utils.isDeletable(this, mPrefs.mediaUri)) ? View.VISIBLE : View.GONE;
+        findViewById(R.id.delete).setVisibility(visibility);
+        findViewById(R.id.dummy).setVisibility(visibility);
+    }
+
+    void deleteMedia() {
+        try {
+            DocumentsContract.deleteDocument(getContentResolver(), mPrefs.mediaUri);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }

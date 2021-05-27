@@ -1,6 +1,6 @@
-Android video player based on ExoPlayer library. It uses ExoPlayer's ffmpeg extension with all its audio formats enabled (it can handle even special formats like AC3, EAC3, DTS, DTS HD, TrueHD etc.).
+Android video player based on the ExoPlayer library. It uses ExoPlayer's FFmpeg extension with all its audio formats enabled (it can handle even special formats like AC3, EAC3, DTS, DTS HD, TrueHD etc.).
 
-It properly synces audio with video track when using Bluetooth earphones/speaker.
+It properly syncs audio with the video track when using Bluetooth earphones/speaker.
 
 Supported formats
 
@@ -17,10 +17,10 @@ Features
  * Playback speed control
  * Horizontal swipe and double tap to quickly seek
  * Vertical swipe to change brightness (left) / volume (right)
- * Pinch to zoom (Android 7 or higher)
- * PiP (Picture in Picture) on Android 8 or higher (resizable on Android 11 or higher)
+ * Pinch to zoom (Android 7+)
+ * PiP (Picture in Picture) on Android 8+ (resizable on Android 11+)
  * Resize (fit/crop)
  * Volume boost
- * No ads, tracking or even the Internet permission (no storage permission either)
+ * No ads, tracking or even Internet permission (no storage permission either)
 
-To load an external (non-embedded) subtitles, long press the file open action in the bottom bar.
+To load external (non-embedded) subtitles, long press the file open action in the bottom bar.

@@ -152,7 +152,7 @@ public class CustomStyledPlayerView extends StyledPlayerView implements GestureD
         if (!PlayerActivity.controllerVisibleFully) {
             showController();
             return true;
-        } else if (PlayerActivity.haveMedia && PlayerActivity.player.isPlaying()) {
+        } else if (PlayerActivity.haveMedia && PlayerActivity.player != null && PlayerActivity.player.isPlaying()) {
             hideController();
             return true;
         }
@@ -161,7 +161,7 @@ public class CustomStyledPlayerView extends StyledPlayerView implements GestureD
 
     @Override
     public boolean onScroll(MotionEvent motionEvent, MotionEvent motionEvent1, float distanceX, float distanceY) {
-        if (mScaleDetector.isInProgress())
+        if (mScaleDetector.isInProgress() || PlayerActivity.player == null)
             return false;
 
         // Exclude edge areas
