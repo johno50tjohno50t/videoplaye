@@ -30,6 +30,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.LocaleList;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.provider.Settings;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
@@ -39,6 +40,7 @@ import android.util.Rational;
 import android.util.TypedValue;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
@@ -54,6 +56,7 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
+import androidx.core.app.ShareCompat;
 import androidx.documentfile.provider.DocumentFile;
 
 import com.brouken.player.dtpv.DoubleTapPlayerView;
@@ -154,10 +157,14 @@ public class PlayerActivity extends Activity {
         Utils.setOrientation(this, mPrefs.orientation);
 
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_player);
+        if (Build.VERSION.SDK_INT == 28 && Build.MANUFACTURER.toLowerCase().equals("xiaomi") && Build.DEVICE.toLowerCase().equals("oneday")) {
+            setContentView(R.layout.activity_player_textureview);
+        } else {
+            setContentView(R.layout.activity_player);
+        }
 
         if (getIntent().getData() != null) {
-            mPrefs.updateMedia(getIntent().getData(), getIntent().getType());
+            mPrefs.updateMedia(this, getIntent().getData(), getIntent().getType());
             searchSubtitles();
         }
 
@@ -280,7 +287,7 @@ public class PlayerActivity extends Activity {
         int titleViewPadding = getResources().getDimensionPixelOffset(R.dimen.exo_styled_bottom_bar_time_padding);
         FrameLayout centerView = playerView.findViewById(R.id.exo_controls_background);
         titleView = new TextView(this);
-        titleView.setBackgroundResource(R.color.exo_bottom_bar_background);
+        titleView.setBackgroundResource(R.color.ui_controls_background);
         titleView.setTextColor(Color.WHITE);
         titleView.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         titleView.setPadding(titleViewPadding, titleViewPadding, titleViewPadding, titleViewPadding);
@@ -290,6 +297,20 @@ public class PlayerActivity extends Activity {
         titleView.setEllipsize(TextUtils.TruncateAt.END);
         titleView.setTextDirection(View.TEXT_DIRECTION_LOCALE);
         centerView.addView(titleView);
+
+        titleView.setOnLongClickListener(view -> {
+            final Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.putExtra(Intent.EXTRA_STREAM, mPrefs.mediaUri);
+            if (mPrefs.mediaType == null)
+                shareIntent.setType("video/*");
+            else
+                shareIntent.setType(mPrefs.mediaType);
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // Start without intent chooser to allow any target to be set as default
+            startActivity(shareIntent);
+
+            return true;
+        });
 
         final StyledPlayerControlView controlView = playerView.findViewById(R.id.exo_controller);
         controlView.setOnApplyWindowInsetsListener((view, windowInsets) -> {
@@ -340,7 +361,7 @@ public class PlayerActivity extends Activity {
 
         // Prevent double tap actions in controller
         findViewById(R.id.exo_bottom_bar).setOnTouchListener((v, event) -> true);
-        titleView.setOnTouchListener((v, event) -> true);
+        //titleView.setOnTouchListener((v, event) -> true);
 
         playbackStateListener = new PlaybackStateListener();
 
@@ -455,7 +476,7 @@ public class PlayerActivity extends Activity {
         super.onNewIntent(intent);
 
         if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
-            mPrefs.updateMedia(intent.getData(), intent.getType());
+            mPrefs.updateMedia(this, intent.getData(), intent.getType());
             searchSubtitles();
             initializePlayer();
         }
@@ -625,7 +646,7 @@ public class PlayerActivity extends Activity {
                     }
                 }
 
-                mPrefs.updateMedia(uri, data.getType());
+                mPrefs.updateMedia(this, uri, data.getType());
                 searchSubtitles();
             }
         } else if (requestCode == REQUEST_CHOOSER_SUBTITLE) {
